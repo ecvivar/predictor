@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forecast — Motor de Predicción de Fútbol de Selecciones</title>
+<meta name="description" content="Sistema de predicción cuantitativa de fútbol de selecciones nacionales con modelo de 16 etapas: Elo dinámico, xG, Dixon-Coles, Monte Carlo y más.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- Fondo animado -->
+<div class="bg-orbs">
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
+</div>
+
+<!-- Loading Overlay -->
+<div class="loading-overlay" id="loading">
+  <div class="loading-content">
+    <div class="loading-logo">⚽</div>
+    <div class="loading-spinner"></div>
+    <div class="loading-title">Ejecutando Análisis</div>
+    <div class="loading-steps" id="loadingSteps">
+      <div class="load-step active" id="ls1">📊 Cargando historial de 49,000+ partidos...</div>
+      <div class="load-step" id="ls2">🔢 Calculando ratings Elo dinámicos...</div>
+      <div class="load-step" id="ls3">⚡ Ejecutando 100,000 simulaciones Monte Carlo...</div>
+      <div class="load-step" id="ls4">🧠 Aplicando corrección Dixon-Coles...</div>
+      <div class="load-step" id="ls5">📈 Generando informe ejecutivo de 16 etapas...</div>
+    </div>
+  </div>
+</div>
+
+<div class="app">
+
+  <!-- ───── HEADER ───── -->
+  <header class="header">
+    <div class="header-brand">
+      <div class="brand-icon">
+        <span>⚽</span>
+      </div>
+      <div class="brand-text">
+        <h1 class="brand-name">FORECAST</h1>
+        <span class="brand-sub">Motor Cuantitativo de Predicción · 16 Etapas</span>
+      </div>
+    </div>
+
+    <div class="match-selector glass-card" id="matchSelector">
+      <div class="selector-group">
+        <label class="selector-label">SELECCIÓN A</label>
+        <select class="team-select" id="teamA" aria-label="Equipo A"></select>
+      </div>
+      <div class="vs-badge">VS</div>
+      <div class="selector-group">
+        <label class="selector-label">SELECCIÓN B</label>
+        <select class="team-select" id="teamB" aria-label="Equipo B"></select>
+      </div>
+      <button class="btn-predict" id="predictBtn" aria-label="Ejecutar predicción">
+        <span class="btn-icon">▶</span>
+        <span>PREDECIR</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="error-banner" id="errorMsg" role="alert"></div>
+
+  <!-- ───── CONTROLES CONTEXTUALES ───── -->
+  <section class="controls-section glass-card" aria-label="Parámetros contextuales">
+    <div class="controls-header">
+      <h2 class="controls-title">⚙ Parámetros Contextuales</h2>
+      <span class="controls-subtitle">Ajusta los factores del encuentro para refinar el modelo</span>
+    </div>
+    <div class="controls-grid">
+
+      <div class="ctrl-group">
+        <label class="ctrl-label">
+          <span class="ctrl-icon">🏟</span> Cancha Neutral
+        </label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="neutral" class="ctrl">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div class="ctrl-group">
+        <label class="ctrl-label"><span class="ctrl-icon">⛰</span> Altitud (m)</label>
+        <input type="range" id="altitude" class="ctrl range-input" min="0" max="4000" value="0" step="100">
+        <span class="ctrl-val" id="altV">0 m</span>
+      </div>
+
+      <div class="ctrl-group">
+        <label class="ctrl-label"><span class="ctrl-icon">🌡</span> Temperatura (°C)</label>
+        <input type="range" id="temperature" class="ctrl range-input" min="-10" max="45" value="20" step="1">
+        <span class="ctrl-val" id="tempV">20°C</span>
+      </div>
+
+      <div class="ctrl-group">
+        <label class="ctrl-label"><span class="ctrl-icon">💧</span> Humedad (%)</label>
+        <input type="range" id="humidity" class="ctrl range-input" min="0" max="100" value="50" step="5">
+        <span class="ctrl-val" id="humV">50%</span>
+      </div>
+
+      <div class="ctrl-group">
+        <label class="ctrl-label"><span class="ctrl-icon">😴</span> Descanso A (días)</label>
+        <input type="range" id="restA" class="ctrl range-input" min="1" max="14" value="7" step="1">
+        <span class="ctrl-val" id="restAV">7d</span>
+      </div>
+
+      <div class="ctrl-group">
+        <label class="ctrl-label"><span class="ctrl-icon">😴</span> Descanso B (días)</label>
+        <input type="range" id="restB" class="ctrl range-input" min="1" max="14" value="7" step="1">
+        <span class="ctrl-val" id="restBV">7d</span>
+      </div>
+
+      <div class="ctrl-group">
+        <label class="ctrl-label"><span class="ctrl-icon">🏥</span> Lesiones A</label>
+        <input type="range" id="injA" class="ctrl range-input" min="0" max="5" value="0" step="1">
+        <span class="ctrl-val" id="injAV">0</span>
+      </div>
+
+      <div class="ctrl-group">
+        <label class="ctrl-label"><span class="ctrl-icon">🏥</span> Lesiones B</label>
+        <input type="range" id="injB" class="ctrl range-input" min="0" max="5" value="0" step="1">
+        <span class="ctrl-val" id="injBV">0</span>
+      </div>
+
+      <div class="ctrl-group">
+        <label class="ctrl-label"><span class="ctrl-icon">🟥</span> Susp. A</label>
+        <input type="range" id="susA" class="ctrl range-input" min="0" max="3" value="0" step="1">
+        <span class="ctrl-val" id="susAV">0</span>
+      </div>
+
+      <div class="ctrl-group">
+        <label class="ctrl-label"><span class="ctrl-icon">🟥</span> Susp. B</label>
+        <input type="range" id="susB" class="ctrl range-input" min="0" max="3" value="0" step="1">
+        <span class="ctrl-val" id="susBV">0</span>
+      </div>
+
+      <div class="ctrl-group">
+        <label class="ctrl-label"><span class="ctrl-icon">✈</span> Viaje A (km)</label>
+        <input type="range" id="travelA" class="ctrl range-input" min="0" max="20000" value="0" step="500">
+        <span class="ctrl-val" id="travAV">0 km</span>
+      </div>
+
+      <div class="ctrl-group">
+        <label class="ctrl-label"><span class="ctrl-icon">✈</span> Viaje B (km)</label>
+        <input type="range" id="travelB" class="ctrl range-input" min="0" max="20000" value="0" step="500">
+        <span class="ctrl-val" id="travBV">0 km</span>
+      </div>
+
+      <div class="ctrl-group">
+        <label class="ctrl-label"><span class="ctrl-icon">🏆</span> Importancia</label>
+        <select id="importance" class="ctrl team-select" style="min-width:unset;font-size:13px;padding:6px 10px">
+          <option value="baja">Amistoso</option>
+          <option value="normal" selected>Clasificatorio</option>
+          <option value="alta">Copa Continental</option>
+          <option value="final">Final Mundial</option>
+        </select>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ───── RESULTADOS ───── -->
+  <div id="results" class="results-container" style="display:none">
+
+    <!-- HERO: Probabilidades principales -->
+    <section class="hero-probs glass-card" aria-label="Probabilidades principales">
+      <div class="hero-header">
+        <span class="hero-badge">🎯 ANÁLISIS COMPLETADO · MODELO 16 ETAPAS</span>
+        <span class="hero-badge-mc">MC 100K</span>
+      </div>
+      <div class="hero-teams" id="heroTeams"></div>
+      <div class="prob-track-container">
+        <div class="prob-track" id="probTrack"></div>
+        <div class="prob-labels" id="probLabels"></div>
+        <div class="prob-odds" id="probOdds"></div>
+      </div>
+      <div class="hero-verdict" id="heroVerdict"></div>
+    </section>
+
+    <!-- ETAPA 16: Conclusión Ejecutiva (elevada al top) -->
+    <section id="execSection" aria-label="Conclusión ejecutiva">
+      <div class="stage-header">
+        <div class="stage-badge-num">16</div>
+        <div>
+          <h2 class="stage-title">Conclusión Ejecutiva</h2>
+          <p class="stage-sub">Síntesis del modelo · Probabilidades finales · Top marcadores · Riesgos</p>
+        </div>
+      </div>
+      <div id="s16"></div>
+    </section>
+
+    <!-- ETAPA 1 -->
+    <section aria-label="Etapa 1 - Historial">
+      <div class="stage-header">
+        <div class="stage-badge-num">01</div>
+        <div>
+          <h2 class="stage-title">Recolección y Validación de Datos</h2>
+          <p class="stage-sub">Historial general · Últimos 5/10/20 partidos · Head-to-Head</p>
+        </div>
+      </div>
+      <div class="grid-2" id="s1"></div>
+    </section>
+
+    <!-- ETAPA 2 -->
+    <section aria-label="Etapa 2 - Elo">
+      <div class="stage-header">
+        <div class="stage-badge-num">02</div>
+        <div>
+          <h2 class="stage-title">Sistema Elo Dinámico</h2>
+          <p class="stage-sub">Rating ponderado por torneo · K-factors ajustados · Diferencial Elo → probabilidad teórica</p>
+        </div>
+      </div>
+      <div class="grid-2" id="s2"></div>
+    </section>
+
+    <!-- ETAPA 3 -->
+    <section aria-label="Etapa 3 - IFR">
+      <div class="stage-header">
+        <div class="stage-badge-num">03</div>
+        <div>
+          <h2 class="stage-title">Índice de Forma Reciente (IFR)</h2>
+          <p class="stage-sub">Últimos 20 partidos ponderados · Calidad de rivales · Condición local/visitante</p>
+        </div>
+      </div>
+      <div class="grid-2" id="s3"></div>
+    </section>
+
+    <!-- ETAPA 4 -->
+    <section aria-label="Etapa 4 - Rivales">
+      <div class="stage-header">
+        <div class="stage-badge-num">04</div>
+        <div>
+          <h2 class="stage-title">Análisis de Fortaleza de Rivales</h2>
+          <p class="stage-sub">Elite / Fuertes / Medios / Débiles · Rendimiento por categoría · Inflación de estadísticas</p>
+        </div>
+      </div>
+      <div class="grid-2" id="s4"></div>
+    </section>
+
+    <!-- ETAPA 5 -->
+    <section aria-label="Etapa 5 - xG">
+      <div class="stage-header">
+        <div class="stage-badge-num">05</div>
+        <div>
+          <h2 class="stage-title">Modelo xG Avanzado (Expected Goals)</h2>
+          <p class="stage-sub">xG · xGA · xGD · Eficiencias ofensiva y defensiva · Desglose por condición</p>
+        </div>
+      </div>
+      <div class="grid-2" id="s5"></div>
+    </section>
+
+    <!-- ETAPA 6 -->
+    <section aria-label="Etapa 6 - Contexto">
+      <div class="stage-header">
+        <div class="stage-badge-num">06</div>
+        <div>
+          <h2 class="stage-title">Factores Contextuales</h2>
+          <p class="stage-sub">Localía · Altitud · Temperatura · Humedad · Viaje · Fatiga · Lesiones · Importancia</p>
+        </div>
+      </div>
+      <div class="single-card glass-card" id="s6"></div>
+    </section>
+
+    <!-- ETAPA 7 -->
+    <section aria-label="Etapa 7 - Meta Modelo">
+      <div class="stage-header">
+        <div class="stage-badge-num">07</div>
+        <div>
+          <h2 class="stage-title">Meta Modelo Predictivo (MMP) · IFF</h2>
+          <p class="stage-sub">Índice Final de Fuerza 0-100 · Pesos ponderados · Comparación radar</p>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="glass-card" id="s7"></div>
+        <div class="glass-card">
+          <div class="card-header-sm">
+            <h3>Radar Comparativo</h3>
+            <span class="tag-green">IFF</span>
+          </div>
+          <div class="radar-box"><canvas id="radarChart"></canvas></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ETAPA 8 -->
+    <section aria-label="Etapa 8 - Lambda">
+      <div class="stage-header">
+        <div class="stage-badge-num">08</div>
+        <div>
+          <h2 class="stage-title">Estimación de Goles Esperados (λ)</h2>
+          <p class="stage-sub">Ataque propio · Defensa rival · Ajustes contextuales · Ajuste por localía</p>
+        </div>
+      </div>
+      <div class="single-card glass-card" id="s8"></div>
+    </section>
+
+    <!-- ETAPA 9 -->
+    <section aria-label="Etapa 9 - Poisson">
+      <div class="stage-header">
+        <div class="stage-badge-num">09</div>
+        <div>
+          <h2 class="stage-title">Modelo Poisson</h2>
+          <p class="stage-sub">Distribución de probabilidad de goles 0–5+ · Matriz completa de resultados</p>
+        </div>
+      </div>
+      <div class="glass-card">
+        <div class="card-header-sm">
+          <h3>Distribución Poisson de Goles</h3>
+          <span class="tag-blue">P(X=k)</span>
+        </div>
+        <div class="chart-box"><canvas id="poissonChart"></canvas></div>
+      </div>
+    </section>
+
+    <!-- ETAPA 10 -->
+    <section aria-label="Etapa 10 - Dixon-Coles">
+      <div class="stage-header">
+        <div class="stage-badge-num">10</div>
+        <div>
+          <h2 class="stage-title">Ajuste Dixon-Coles</h2>
+          <p class="stage-sub" id="s10Info">Corrección de resultados de baja puntuación · ρ = −0.06</p>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="glass-card">
+          <div class="card-header-sm">
+            <h3>Mapa de Calor — Matriz Ajustada</h3>
+            <span class="tag-green">DC ρ=−0.06</span>
+          </div>
+          <div class="heatmap-wrapper">
+            <div class="heatmap-axis-y" id="heatmapAxisY"></div>
+            <div>
+              <div class="heatmap-axis-x" id="heatmapAxisX"></div>
+              <div class="heatmap-grid" id="heatmapGrid"></div>
+            </div>
+          </div>
+          <div class="heatmap-legend">
+            <span style="color:var(--text-muted);font-size:11px">A↓ B→</span>
+            <div class="legend-bar"></div>
+            <span style="font-size:11px;color:var(--text-muted)">Mayor prob.</span>
+          </div>
+        </div>
+        <div class="glass-card">
+          <div class="card-header-sm">
+            <h3>Impacto de la Corrección</h3>
+            <span class="tag-gold">Δ DC</span>
+          </div>
+          <div id="s10Changes"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ETAPA 11 -->
+    <section aria-label="Etapa 11 - Monte Carlo">
+      <div class="stage-header">
+        <div class="stage-badge-num">11</div>
+        <div>
+          <h2 class="stage-title">Simulación Monte Carlo</h2>
+          <p class="stage-sub">100,000 simulaciones · Intervalos de confianza 95% · Varianza · Desviación estándar</p>
+        </div>
+      </div>
+      <div class="single-card glass-card" id="s11"></div>
+    </section>
+
+    <!-- ETAPA 12 -->
+    <section aria-label="Etapa 12 - Sensibilidad">
+      <div class="stage-header">
+        <div class="stage-badge-num">12</div>
+        <div>
+          <h2 class="stage-title">Análisis de Sensibilidad</h2>
+          <p class="stage-sub">Impacto de variables clave · Sede neutral · Altitud · Bajas · Fatiga</p>
+        </div>
+      </div>
+      <div class="sensitivity-grid" id="s12"></div>
+    </section>
+
+    <!-- ETAPA 13 -->
+    <section aria-label="Etapa 13 - Escenarios">
+      <div class="stage-header">
+        <div class="stage-badge-num">13</div>
+        <div>
+          <h2 class="stage-title">Escenarios</h2>
+          <p class="stage-sub">Base · Conservador · Optimista A · Optimista B · Sorpresa</p>
+        </div>
+      </div>
+      <div class="glass-card" id="s13"></div>
+    </section>
+
+    <!-- ETAPA 14 -->
+    <section aria-label="Etapa 14 - Mercados">
+      <div class="stage-header">
+        <div class="stage-badge-num">14</div>
+        <div>
+          <h2 class="stage-title">Mercados Derivados</h2>
+          <p class="stage-sub">BTTS · Over/Under · Portería a cero · Cuotas implícitas</p>
+        </div>
+      </div>
+      <div class="glass-card" id="s14"></div>
+    </section>
+
+    <!-- ETAPA 15 -->
+    <section aria-label="Etapa 15 - Validación">
+      <div class="stage-header">
+        <div class="stage-badge-num">15</div>
+        <div>
+          <h2 class="stage-title">Consenso y Validación Externa</h2>
+          <p class="stage-sub">Ranking Elo global · FIFA estimado · Análisis de divergencias</p>
+        </div>
+      </div>
+      <div class="single-card glass-card" id="s15"></div>
+    </section>
+
+  </div><!-- /results -->
+
+  <footer class="app-footer">
+    <div>⚽ FORECAST · Motor Cuantitativo de Predicción · 49,000+ partidos históricos desde 1872</div>
+    <div style="color:var(--text-muted);font-size:11px;margin-top:4px">Los modelos estadísticos son estimaciones probabilísticas, no certezas. Úsalos con criterio analítico.</div>
+  </footer>
+
+</div><!-- /app -->
+
+<script src="app.js"></script>
+</body>
+</html>

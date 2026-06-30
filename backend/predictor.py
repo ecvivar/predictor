@@ -1,3 +1,4 @@
+import hashlib
 import math
 import numpy as np
 from datetime import datetime, timedelta
@@ -29,9 +30,12 @@ class Predictor:
         goals_away = sum(m["away_score"] for m in self.matches)
         self.global_avg_goals = (goals_home + goals_away) / (2 * total)
 
-    def _compute_recent_elo_trends(self):
+    def _compute_recent_elo_trends(self, reference_date=None):
         self.elo_recent_trend = {}
-        cutoff = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+        if reference_date:
+            cutoff = (datetime.strptime(reference_date, "%Y-%m-%d") - timedelta(days=365)).strftime("%Y-%m-%d")
+        else:
+            cutoff = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
         for team, history in self.elo_history.items():
             recent = [h for h in history if h["date"] >= cutoff]
             if len(recent) >= 2:
@@ -39,9 +43,42 @@ class Predictor:
             else:
                 self.elo_recent_trend[team] = 0
 
+    def _rebuild_for_date(self, reference_date):
+        if not hasattr(self, "_all_matches"):
+            self._all_matches = dl.load_matches()
+        self._saved_matches = self.matches
+        self._saved_elo = self.elo_ratings
+        self._saved_elo_history = self.elo_history
+        self._saved_teams = self.teams
+        self._saved_global_avg = self.global_avg_goals
+        self._saved_elo_trend = self.elo_recent_trend
+        self.matches = [m for m in self._all_matches if m["date"] < reference_date]
+        self.elo_ratings, self.elo_history = dl.compute_elo_history(self.matches)
+        self.teams = sorted(self.elo_ratings.keys())
+        self._compute_global_stats()
+        self._compute_recent_elo_trends(reference_date)
+
+    def _restore_state(self):
+        self.matches = self._saved_matches
+        self.elo_ratings = self._saved_elo
+        self.elo_history = self._saved_elo_history
+        self.teams = self._saved_teams
+        self.global_avg_goals = self._saved_global_avg
+        self.elo_recent_trend = self._saved_elo_trend
+
     def predict(self, team_a, team_b, params=None):
         if params is None:
             params = {}
+        reference_date = params.get("reference_date")
+        if reference_date:
+            self._rebuild_for_date(reference_date)
+        try:
+            return self._predict_stages(team_a, team_b, params)
+        finally:
+            if reference_date:
+                self._restore_state()
+
+    def _predict_stages(self, team_a, team_b, params):
         stages = {}
         stages["stage_1"] = self._stage_1(team_a, team_b)
         stages["stage_2"] = self._stage_2(team_a, team_b)
@@ -349,21 +386,21 @@ class Predictor:
             "inflated_warning": "Estadisticas potencialmente infladas" if weak_pct > 40 else "Perfil de rivales solido" if weak_pct < 20 else "Perfil de rivales equilibrado"
         }
 
-    # ─── Stage 5: Modelo xG Avanzado ────────────────────────────────────────
+    # ─── Stage 5: Rendimiento Ajustado ─────────────────────────────────────
     def _stage_5(self, team_a, team_b):
         return {
-            "team_a": self._compute_xg_detailed(team_a),
-            "team_b": self._compute_xg_detailed(team_b),
-            "metodologia": "xG estimado = 0.7 * Goles Reales + 0.3 * Expectativa Base (derivada de Elo relativo). "
+            "team_a": self._compute_adjusted_performance(team_a),
+            "team_b": self._compute_adjusted_performance(team_b),
+            "metodologia": "Rendimiento ajustado = 0.7 * Goles Reales + 0.3 * Expectativa Base (derivada de Elo relativo). "
                           "Separado por condicion: local, visitante, neutral. "
-                          "xGD = xG - xGA. Eficiencia Ofensiva = xG / Promedio Liga. "
-                          "Eficiencia Defensiva = xGA / Promedio Liga."
+                          "Perf Diff = Perf - Perf Against. Eficiencia Ofensiva = Perf / Promedio Liga. "
+                          "Eficiencia Defensiva = Perf Against / Promedio Liga."
         }
 
-    def _compute_xg_detailed(self, team):
+    def _compute_adjusted_performance(self, team):
         recent = dl.get_recent_matches(self.matches, team, 20)
         if not recent:
-            return {"xg": 0, "xga": 0, "xgd": 0, "by_venue": {}}
+            return {"perf": 0, "perf_against": 0, "perf_diff": 0, "by_venue": {}}
         by_venue = {"home": [], "away": [], "neutral": []}
         for m in recent:
             is_home = m["home_team"] == team
@@ -384,27 +421,27 @@ class Predictor:
             else:
                 actual_gf = m["away_score"]
                 actual_ga = m["home_score"]
-            xg = 0.7 * actual_gf + 0.3 * base_exp
-            xga = 0.7 * actual_ga + 0.3 * (self.global_avg_goals * 2 - base_exp)
-            by_venue[venue].append({"xg": xg, "xga": xga, "opponent": opponent, "result": f"{m['home_score']}-{m['away_score']}"})
+            perf = 0.7 * actual_gf + 0.3 * base_exp
+            perf_against = 0.7 * actual_ga + 0.3 * (self.global_avg_goals * 2 - base_exp)
+            by_venue[venue].append({"perf": perf, "perf_against": perf_against, "opponent": opponent, "result": f"{m['home_score']}-{m['away_score']}"})
         def avg_venue(vlist):
             if not vlist:
-                return {"xg": 0, "xga": 0, "xgd": 0, "count": 0}
-            xg_m = sum(v["xg"] for v in vlist) / len(vlist)
-            xga_m = sum(v["xga"] for v in vlist) / len(vlist)
-            return {"xg": round(xg_m, 3), "xga": round(xga_m, 3), "xgd": round(xg_m - xga_m, 3), "count": len(vlist)}
-        all_xg = [v["xg"] for lst in by_venue.values() for v in lst]
-        all_xga = [v["xga"] for lst in by_venue.values() for v in lst]
-        avg_xg = sum(all_xg) / len(all_xg) if all_xg else 0
-        avg_xga = sum(all_xga) / len(all_xga) if all_xga else 0
+                return {"perf": 0, "perf_against": 0, "perf_diff": 0, "count": 0}
+            perf_m = sum(v["perf"] for v in vlist) / len(vlist)
+            perf_against_m = sum(v["perf_against"] for v in vlist) / len(vlist)
+            return {"perf": round(perf_m, 3), "perf_against": round(perf_against_m, 3), "perf_diff": round(perf_m - perf_against_m, 3), "count": len(vlist)}
+        all_perf = [v["perf"] for lst in by_venue.values() for v in lst]
+        all_perf_against = [v["perf_against"] for lst in by_venue.values() for v in lst]
+        avg_perf = sum(all_perf) / len(all_perf) if all_perf else 0
+        avg_perf_against = sum(all_perf_against) / len(all_perf_against) if all_perf_against else 0
         return {
-            "xg": round(avg_xg, 3),
-            "xga": round(avg_xga, 3),
-            "xgd": round(avg_xg - avg_xga, 3),
+            "perf": round(avg_perf, 3),
+            "perf_against": round(avg_perf_against, 3),
+            "perf_diff": round(avg_perf - avg_perf_against, 3),
             "by_venue": {v: avg_venue(lst) for v, lst in by_venue.items()},
-            "offensive_efficiency": round(avg_xg / self.global_avg_goals, 3) if self.global_avg_goals > 0 else 1,
-            "defensive_efficiency": round(avg_xga / self.global_avg_goals, 3) if self.global_avg_goals > 0 else 1,
-            "sobre_rendimiento": round(avg_xg - (sum(v["xg"] for lst in by_venue.values() for v in lst) / len(all_xg) if all_xg else 0), 3)
+            "offensive_efficiency": round(avg_perf / self.global_avg_goals, 3) if self.global_avg_goals > 0 else 1,
+            "defensive_efficiency": round(avg_perf_against / self.global_avg_goals, 3) if self.global_avg_goals > 0 else 1,
+            "sobre_rendimiento": round(avg_perf - (sum(v["perf"] for lst in by_venue.values() for v in lst) / len(all_perf) if all_perf else 0), 3)
         }
 
     # ─── Stage 6: Factores Contextuales ─────────────────────────────────────
@@ -526,11 +563,11 @@ class Predictor:
         ifr_score_a = (ifr_a / max_ifr) * 100 if max_ifr > 0 else 50
         ifr_score_b = (ifr_b / max_ifr) * 100 if max_ifr > 0 else 50
 
-        xg_a = stages["stage_5"]["team_a"]
-        xg_b = stages["stage_5"]["team_b"]
-        xgd_max = max(abs(xg_a["xgd"]), abs(xg_b["xgd"]), 0.1)
-        xg_score_a = 50 + (xg_a["xgd"] / xgd_max) * 50
-        xg_score_b = 50 + (xg_b["xgd"] / xgd_max) * 50
+        perf_a = stages["stage_5"]["team_a"]
+        perf_b = stages["stage_5"]["team_b"]
+        perf_diff_max = max(abs(perf_a["perf_diff"]), abs(perf_b["perf_diff"]), 0.1)
+        perf_score_a = 50 + (perf_a["perf_diff"] / perf_diff_max) * 50
+        perf_score_b = 50 + (perf_b["perf_diff"] / perf_diff_max) * 50
 
         opp_a = stages["stage_4"]["team_a"]
         opp_b = stages["stage_4"]["team_b"]
@@ -553,17 +590,17 @@ class Predictor:
         squad_score_b = (squad_b / squad_max) * 100
 
         weights = {
-            "elo": 0.25, "form": 0.20, "xg": 0.20, "opponent": 0.10,
+            "elo": 0.25, "form": 0.20, "perf": 0.20, "opponent": 0.10,
             "context": 0.15, "h2h": 0.05, "squad": 0.05
         }
 
         iff_a = (elo_score_a * weights["elo"] + ifr_score_a * weights["form"] +
-                 xg_score_a * weights["xg"] + opp_score_a * weights["opponent"] +
+                 perf_score_a * weights["perf"] + opp_score_a * weights["opponent"] +
                  ctx_score_a * weights["context"] + h2h_score_a * weights["h2h"] +
                  squad_score_a * weights["squad"])
 
         iff_b = (elo_score_b * weights["elo"] + ifr_score_b * weights["form"] +
-                 xg_score_b * weights["xg"] + opp_score_b * weights["opponent"] +
+                 perf_score_b * weights["perf"] + opp_score_b * weights["opponent"] +
                  ctx_score_b * weights["context"] + h2h_score_b * weights["h2h"] +
                  squad_score_b * weights["squad"])
 
@@ -584,7 +621,7 @@ class Predictor:
             "componentes": {
                 "elo_rating": {"a": round(elo_score_a, 2), "b": round(elo_score_b, 2), "peso": "25%"},
                 "forma_reciente": {"a": round(ifr_score_a, 2), "b": round(ifr_score_b, 2), "peso": "20%"},
-                "xg_diferencia": {"a": round(xg_score_a, 2), "b": round(xg_score_b, 2), "peso": "20%"},
+                "perf_diferencia": {"a": round(perf_score_a, 2), "b": round(perf_score_b, 2), "peso": "20%"},
                 "fortaleza_rivales": {"a": round(opp_score_a, 2), "b": round(opp_score_b, 2), "peso": "10%"},
                 "localia_contexto": {"a": round(ctx_score_a, 2), "b": round(ctx_score_b, 2), "peso": "15%"},
                 "historial_directo": {"a": round(h2h_score_a, 2), "b": round(h2h_score_b, 2), "peso": "5%"},
@@ -617,11 +654,12 @@ class Predictor:
                   'costa rica', 'slovakia', 'romania', 'russia', 'scotland',
                   'norway', 'greece', 'slovenia', 'mali', 'south africa',
                   'canada', 'panama', 'venezuela', 'bolivia', 'honduras']
+        h = int(hashlib.md5(team.encode()).hexdigest(), 16)
         if name_lower in elite:
-            return 90 + hash(team) % 10
+            return 90 + h % 10
         if name_lower in strong:
-            return 65 + hash(team) % 20
-        return 40 + hash(team) % 25
+            return 65 + h % 20
+        return 40 + h % 25
 
     # ─── Stage 8: Estimacion de Goles Esperados (Lambda) ────────────────────
     def _stage_8(self, team_a, team_b, stages):
@@ -919,7 +957,7 @@ class Predictor:
             f"Nivel de confianza del modelo: {model_confidence:.1f}%\n"
             f"Factores clave: Diferencia Elo de {abs(stages['stage_2']['elo_diff']):.0f} puntos, "
             f"IFR {stages['stage_3']['team_a']['ifr_score']:.0f} vs {stages['stage_3']['team_b']['ifr_score']:.0f}, "
-            f"xGD {stages['stage_5']['team_a']['xgd']:.2f} vs {stages['stage_5']['team_b']['xgd']:.2f}, "
+            f"Perf Diff {stages['stage_5']['team_a']['perf_diff']:.2f} vs {stages['stage_5']['team_b']['perf_diff']:.2f}, "
             f"Probabilidad Ambos Marcan: {stages['stage_14']['btts_pct']}."
         )
         return {

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 
 from . import data_loader as dl
+from .translations import translate_team
 from .utils import (
     poisson_distribution, dixon_coles_adjustment, monte_carlo_simulation,
     expected_goals_from_matrix, elo_expected, tournament_k_factor,
@@ -57,7 +58,7 @@ class Predictor:
         stages["stage_13"] = self._stage_13(team_a, team_b, params)
         stages["stage_14"] = self._stage_14(stages)
         stages["stage_15"] = self._stage_15(team_a, team_b)
-        stages["stage_16"] = self._stage_16(stages)
+        stages["stage_16"] = self._stage_16(team_a, team_b, stages)
         return stages
 
     # ─── Stage 1: Recoleccion y Validacion de Datos ─────────────────────────
@@ -103,14 +104,16 @@ class Predictor:
         h2h = dl.get_head_to_head(self.matches, team_a, team_b)
         h2h_summary = self._summarize_h2h(h2h, team_a, team_b)
 
+        t_a = translate_team(team_a)
+        t_b = translate_team(team_b)
         return {
             "team_a": {
-                "name": team_a,
+                "name": t_a,
                 "general": _summarize(dl.get_team_matches(self.matches, team_a), team_a),
                 "recent": _recent_windows(self.matches, team_a)
             },
             "team_b": {
-                "name": team_b,
+                "name": t_b,
                 "general": _summarize(dl.get_team_matches(self.matches, team_b), team_b),
                 "recent": _recent_windows(self.matches, team_b)
             },
@@ -166,6 +169,7 @@ class Predictor:
     def _stage_2(self, team_a, team_b):
         elo_a = self.elo_ratings.get(team_a, 1500)
         elo_b = self.elo_ratings.get(team_b, 1500)
+        t_a, t_b = translate_team(team_a), translate_team(team_b)
         prob_a = elo_expected(elo_a, elo_b)
         trend_a = self.elo_recent_trend.get(team_a, 0)
         trend_b = self.elo_recent_trend.get(team_b, 0)
@@ -207,7 +211,7 @@ class Predictor:
                 "team_b": round((1 - prob_a) * 100, 2)
             },
             "interpretacion": f"Elo diferencial de {abs(round(elo_a - elo_b, 1))} puntos. "
-                             f"El modelo asigna {round(prob_a * 100, 1)}% de probabilidad teorica a {team_a}.",
+                             f"El modelo asigna {round(prob_a * 100, 1)}% de probabilidad teorica a {t_a}.",
             "metodologia": "Elo dinamico ponderado por importancia del torneo: Mundial K=60, "
                           "Eliminatorias K=54, Copas Continentales K=48, Nations League K=42, "
                           "Amistosos K=21. Multiplicador por diferencia de goles aplicado.",
@@ -407,6 +411,7 @@ class Predictor:
     def _stage_6(self, team_a, team_b, params):
         neutral = params.get("neutral", False)
         home_team = params.get("home_team", team_a)
+        t_a, t_b = translate_team(team_a), translate_team(team_b)
         altitude = params.get("altitude", 0)
         temperature = params.get("temperature", 20)
         humidity = params.get("humidity", 50)
@@ -427,10 +432,10 @@ class Predictor:
         # Localia
         if not neutral:
             if home_team == team_a:
-                factors.append({"factor": "Localia", "impact_a": 0.15, "impact_b": 0.0, "detail": f"{team_a} juega en casa"})
+                factors.append({"factor": "Localia", "impact_a": 0.15, "impact_b": 0.0, "detail": f"{t_a} juega en casa"})
                 adj_a += 0.15
             else:
-                factors.append({"factor": "Localia", "impact_a": 0.0, "impact_b": 0.15, "detail": f"{team_b} juega en casa"})
+                factors.append({"factor": "Localia", "impact_a": 0.0, "impact_b": 0.15, "detail": f"{t_b} juega en casa"})
                 adj_b += 0.15
         else:
             factors.append({"factor": "Localia", "impact_a": 0.0, "impact_b": 0.0, "detail": "Sede neutral"})
@@ -503,13 +508,14 @@ class Predictor:
             "factores": factors,
             "ajuste_total_a": round(adj_a, 4),
             "ajuste_total_b": round(adj_b, 4),
-            "interpretacion": f"Ajuste contextual: {team_a} {adj_a:+.2f}, {team_b} {adj_b:+.2f}"
+            "interpretacion": f"Ajuste contextual: {t_a} {adj_a:+.2f}, {t_b} {adj_b:+.2f}"
         }
 
     # ─── Stage 7: Meta Modelo Predictivo (MMP) ──────────────────────────────
     def _stage_7(self, team_a, team_b, stages):
         elo_a = self.elo_ratings.get(team_a, 1500)
         elo_b = self.elo_ratings.get(team_b, 1500)
+        t_a, t_b = translate_team(team_a), translate_team(team_b)
         max_elo = max(elo_a, elo_b, 2000)
         elo_score_a = (elo_a / max_elo) * 100
         elo_score_b = (elo_b / max_elo) * 100
@@ -565,9 +571,9 @@ class Predictor:
         if abs(diff) < 3:
             interpretation = "Equipos muy equilibrados"
         elif diff > 0:
-            interpretation = f"{team_a} superior por {diff:.1f} puntos IFF"
+            interpretation = f"{t_a} superior por {diff:.1f} puntos IFF"
         else:
-            interpretation = f"{team_b} superior por {abs(diff):.1f} puntos IFF"
+            interpretation = f"{t_b} superior por {abs(diff):.1f} puntos IFF"
 
         return {
             "iff_a": round(iff_a, 2),
@@ -708,6 +714,7 @@ class Predictor:
     # ─── Stage 11: Simulacion Monte Carlo ───────────────────────────────────
     def _stage_11(self, team_a, team_b, stages):
         dc = stages["stage_10"]["after"]
+        t_a, t_b = translate_team(team_a), translate_team(team_b)
         results = monte_carlo_simulation(dc, iterations=100000)
         exp_a, exp_b = expected_goals_from_matrix(dc, 6)
         results["expected_goals_matrix_a"] = round(exp_a, 4)
@@ -718,9 +725,9 @@ class Predictor:
             "team_b": f"{results['probabilities']['win_b']*100:.2f}%"
         }
         results["interpretacion"] = (f"100,000 simulaciones ejecutadas. "
-            f"{team_a} gana {results['probabilities']['win_a']*100:.1f}%, "
+            f"{t_a} gana {results['probabilities']['win_a']*100:.1f}%, "
             f"Empate {results['probabilities']['draw']*100:.1f}%, "
-            f"{team_b} gana {results['probabilities']['win_b']*100:.1f}%")
+            f"{t_b} gana {results['probabilities']['win_b']*100:.1f}%")
         return results
 
     # ─── Stage 12: Analisis de Sensibilidad ─────────────────────────────────
@@ -786,6 +793,7 @@ class Predictor:
     # ─── Stage 13: Escenarios ───────────────────────────────────────────────
     def _stage_13(self, team_a, team_b, params):
         base = self._quick_sim(team_a, team_b, params)
+        t_a, t_b = translate_team(team_a), translate_team(team_b)
         cons_p = dict(params)
         cons_p["tactical"] = "conservative"
         conservative = self._quick_sim(team_a, team_b, cons_p)
@@ -806,8 +814,8 @@ class Predictor:
             "descripcion_escenarios": {
                 "base": "Estado actual con variables seleccionadas",
                 "conservador": "Reduccion de variabilidad tactica (modelo mas defensivo)",
-                "optimista_a": f"{team_a} capitaliza al 100% sus virtudes ofensivas",
-                "optimista_b": f"{team_b} capitaliza al 100% sus virtudes ofensivas",
+                "optimista_a": f"{t_a} capitaliza al 100% sus virtudes ofensivas",
+                "optimista_b": f"{t_b} capitaliza al 100% sus virtudes ofensivas",
                 "sorpresa": "Alta probabilidad de resultado anomalo (cuota de fuera > 40%)"
             }
         }
@@ -845,6 +853,7 @@ class Predictor:
     def _stage_15(self, team_a, team_b):
         elo_a = self.elo_ratings.get(team_a, 1500)
         elo_b = self.elo_ratings.get(team_b, 1500)
+        t_a, t_b = translate_team(team_a), translate_team(team_b)
         fifa_a = self._estimate_fifa_rank(team_a)
         fifa_b = self._estimate_fifa_rank(team_b)
         elo_global_ranking = sorted(self.elo_ratings.items(), key=lambda x: x[1], reverse=True)
@@ -860,7 +869,7 @@ class Predictor:
                 "diferencia": abs(fifa_a - fifa_b)
             },
             "analisis_divergencias": {
-                "divergencia_elo_fifa": f"Elo sugiere {team_a if elo_a > elo_b else team_b} superior; "
+                "divergencia_elo_fifa": f"Elo sugiere {t_a if elo_a > elo_b else t_b} superior; "
                                         f"FIFA rank {'coincide' if (fifa_a < fifa_b) == (elo_a > elo_b) else 'difiere'}",
                 "nota": "Ranking FIFA estimado basado en Elo. Consultar FIFA.com para ranking oficial.",
                 "limitacion": "El ranking FIFA oficial usa metodologia diferente que puede divergir significativamente del rating Elo historico."
@@ -878,15 +887,16 @@ class Predictor:
         return 51 + int((1500 - elo) / 3)
 
     # ─── Stage 16: Conclusion Ejecutiva ─────────────────────────────────────
-    def _stage_16(self, stages):
+    def _stage_16(self, team_a, team_b, stages):
+        t_a, t_b = translate_team(team_a), translate_team(team_b)
         mc = stages["stage_11"]
         probs = mc["probabilities"]
         lam = stages["stage_8"]
         dc = stages["stage_10"]["after"]
         top_scores = self._get_top_scores(dc, 10)
         win_p = max(probs["win_a"], probs["win_b"], probs["draw"])
-        likely_winner = "Team A" if probs["win_a"] == win_p else (
-            "Team B" if probs["win_b"] == win_p else "Draw")
+        likely_winner = t_a if probs["win_a"] == win_p else (
+            t_b if probs["win_b"] == win_p else "Empate")
         most_likely = top_scores[0] if top_scores else {"score": "0-0", "probability": 0}
         # Confidence = how much the leading outcome exceeds a random baseline (33%)
         # Scale: 33% lead → high confidence, near-equal → lower confidence
@@ -903,7 +913,7 @@ class Predictor:
         )))
         summary = (
             f"INFORME PREDICTIVO COMPLETO - 16 ETAPAS\n"
-            f"Victorias: {probs['win_a']*100:.1f}% / Empate: {probs['draw']*100:.1f}% / {probs['win_b']*100:.1f}%\n"
+            f"{t_a}: {probs['win_a']*100:.1f}% / Empate: {probs['draw']*100:.1f}% / {t_b}: {probs['win_b']*100:.1f}%\n"
             f"Goles Esperados: {lam['lambda_a']:.2f} - {lam['lambda_b']:.2f}\n"
             f"Marcador mas probable: {most_likely['score']} ({most_likely['probability']:.1f}%)\n"
             f"Nivel de confianza del modelo: {model_confidence:.1f}%\n"
@@ -929,7 +939,7 @@ class Predictor:
             "nivel_confianza": round(model_confidence, 2),
             "ganador_probable": likely_winner,
             "principales_riesgos": [
-                f"Varianza en goles: SD={mc['std_a']:.2f} ({'Team A'}) / {mc['std_b']:.2f} ({'Team B'})",
+                f"Varianza en goles: SD={mc['std_a']:.2f} ({t_a}) / {mc['std_b']:.2f} ({t_b})",
                 f"Escenario sorpresa asigna {stages['stage_13']['sorpresa']['win_b']*100:.0f}% al equipo visitante",
                 "Ajuste Dixon-Coles puede subestimar resultados de alto marcador",
                 "El modelo no captura eventos unicos (expulsiones, penales no convertidos)",
@@ -937,7 +947,7 @@ class Predictor:
             ],
             "resumen_ejecutivo": (
                 f"El modelo predictivo de 16 etapas asigna {probs['win_a']*100:.1f}% de probabilidad de victoria "
-                f"al Equipo A, {probs['draw']*100:.1f}% de empate y {probs['win_b']*100:.1f}% al Equipo B. "
+                f"a {t_a}, {probs['draw']*100:.1f}% de empate y {probs['win_b']*100:.1f}% a {t_b}. "
                 f"Los goles esperados son {lam['lambda_a']:.2f} vs {lam['lambda_b']:.2f}. "
                 f"El marcador mas probable es {most_likely['score']} ({most_likely['probability']:.1f}%). "
                 f"El nivel de confianza del modelo es de {model_confidence:.1f}%. "

@@ -8,6 +8,7 @@ from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from backend.predictor import Predictor
+from backend.translations import translate_team, TRANSLATIONS
 
 app = FastAPI(title="Forecast - Football Prediction MVP", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -34,12 +35,17 @@ class PredictParams(BaseModel):
 
 @app.get("/api/teams")
 def get_teams():
-    return {"teams": predictor.teams, "count": len(predictor.teams)}
+    translated = [{"en": t, "es": translate_team(t)} for t in predictor.teams]
+    return {"teams": translated, "count": len(predictor.teams)}
+
+@app.get("/api/translations")
+def get_translations():
+    return TRANSLATIONS
 
 @app.get("/api/elo")
 def get_elo():
     sorted_elo = sorted(predictor.elo_ratings.items(), key=lambda x: x[1], reverse=True)
-    return {"ratings": [{"team": t, "elo": round(r, 1)} for t, r in sorted_elo[:100]]}
+    return {"ratings": [{"team": translate_team(t), "team_en": t, "elo": round(r, 1)} for t, r in sorted_elo[:100]]}
 
 @app.get("/api/elo/{team}")
 def get_team_elo(team: str):

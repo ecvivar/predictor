@@ -1,6 +1,7 @@
 // ─── STATE ───────────────────────────────────────────────────────────────────
 const state = {
-  teams: [], teamA: '', teamB: '', result: null,
+  teams: [], teamA: '', teamB: '', teamA_api: '', teamB_api: '',
+  teamAMap: {}, result: null,
   charts: {}, loadingStep: 0, loadTimer: null
 };
 
@@ -13,8 +14,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function setupEvents() {
   document.getElementById('predictBtn').addEventListener('click', runPrediction);
-  document.getElementById('teamA').addEventListener('change', e => { state.teamA = e.target.value; });
-  document.getElementById('teamB').addEventListener('change', e => { state.teamB = e.target.value; });
+  document.getElementById('teamA').addEventListener('change', e => {
+    state.teamA_api = e.target.value;
+    state.teamA = state.teamAMap[state.teamA_api] || state.teamA_api;
+  });
+  document.getElementById('teamB').addEventListener('change', e => {
+    state.teamB_api = e.target.value;
+    state.teamB = state.teamAMap[state.teamB_api] || state.teamB_api;
+  });
   document.querySelectorAll('.ctrl').forEach(el => el.addEventListener('input', updateControls));
 }
 
@@ -44,7 +51,9 @@ async function loadTeams() {
   try {
     const r = await fetch('/api/teams');
     const d = await r.json();
-    state.teams = d.teams;
+    state.teamAMap = {};
+    d.teams.forEach(t => { state.teamAMap[t.en] = t.es; });
+    state.teams = d.teams.map(t => t.en);
     populateSelects();
   } catch(e) {
     showError('No se pudo cargar equipos. Verifica que el servidor esté corriendo.');
@@ -64,7 +73,7 @@ function populateSelects() {
     popular.forEach(t => {
       if (state.teams.includes(t)) {
         const o = document.createElement('option');
-        o.value = t; o.textContent = t; sel.appendChild(o);
+        o.value = t; o.textContent = state.teamAMap[t] || t; sel.appendChild(o);
       }
     });
     const sep = document.createElement('option');
@@ -72,26 +81,31 @@ function populateSelects() {
     sel.appendChild(sep);
     state.teams.forEach(t => {
       const o = document.createElement('option');
-      o.value = t; o.textContent = t; sel.appendChild(o);
+      o.value = t; o.textContent = state.teamAMap[t] || t; sel.appendChild(o);
     });
   });
   if (state.teams.includes('Argentina')) a.value = 'Argentina';
   if (state.teams.includes('Brazil')) b.value = 'Brazil';
-  state.teamA = a.value; state.teamB = b.value;
+  const ae = a.value, be = b.value;
+  state.teamA_api = ae; state.teamB_api = be;
+  state.teamA = state.teamAMap[ae] || ae;
+  state.teamB = state.teamAMap[be] || be;
 }
 
 // ─── PREDICTION ──────────────────────────────────────────────────────────────
 async function runPrediction() {
-  state.teamA = document.getElementById('teamA').value;
-  state.teamB = document.getElementById('teamB').value;
-  if (!state.teamA || !state.teamB) { showError('Selecciona ambos equipos'); return; }
-  if (state.teamA === state.teamB) { showError('Los equipos deben ser diferentes'); return; }
+  state.teamA_api = document.getElementById('teamA').value;
+  state.teamB_api = document.getElementById('teamB').value;
+  state.teamA = state.teamAMap[state.teamA_api] || state.teamA_api;
+  state.teamB = state.teamAMap[state.teamB_api] || state.teamB_api;
+  if (!state.teamA_api || !state.teamB_api) { showError('Selecciona ambos equipos'); return; }
+  if (state.teamA_api === state.teamB_api) { showError('Los equipos deben ser diferentes'); return; }
   hideError();
   showLoading(true);
   startLoadingAnimation();
 
   const p = new URLSearchParams({
-    team_a: state.teamA, team_b: state.teamB,
+    team_a: state.teamA_api, team_b: state.teamB_api,
     neutral: document.getElementById('neutral').checked,
     altitude: document.getElementById('altitude').value,
     temperature: document.getElementById('temperature').value,

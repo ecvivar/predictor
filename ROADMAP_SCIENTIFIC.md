@@ -7,9 +7,9 @@ FASE 1
 
 FASE 2
 
-⬜ Iteración 4 - Separar ataque y defensa.
-⬜ Iteración 5 - Agregar métricas automáticas.
-⬜ Iteración 6 - Optimizar pesos.
+✅ Iteración 4 - Separar ataque y defensa.
+✅ Iteración 5 - Agregar métricas automáticas.
+✅ Iteración 6 - Optimizar pesos.
 
 FASE 3
 

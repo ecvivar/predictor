@@ -2,7 +2,7 @@ Estamos trabajando siguiendo el documento AGENT.md.
 
 La auditoría ya fue realizada.
 
-Vamos a ejecutar únicamente la Iteración 3 - Eliminar pseudo xG.
+Vamos a ejecutar únicamente la Iteración 7 - Mejorar Poisson.
 
 No avances sobre ninguna otra iteración.
 

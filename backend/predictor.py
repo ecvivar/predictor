@@ -590,8 +590,8 @@ class Predictor:
         squad_score_b = (squad_b / squad_max) * 100
 
         weights = {
-            "elo": 0.25, "form": 0.20, "perf": 0.20, "opponent": 0.10,
-            "context": 0.15, "h2h": 0.05, "squad": 0.05
+            "elo": 0.2364, "form": 0.1250, "perf": 0.1309, "opponent": 0.2046,
+            "context": 0.0339, "h2h": 0.1691, "squad": 0.1001
         }
 
         iff_a = (elo_score_a * weights["elo"] + ifr_score_a * weights["form"] +
@@ -619,13 +619,13 @@ class Predictor:
             "interpretacion": interpretation,
             "pesos": weights,
             "componentes": {
-                "elo_rating": {"a": round(elo_score_a, 2), "b": round(elo_score_b, 2), "peso": "25%"},
-                "forma_reciente": {"a": round(ifr_score_a, 2), "b": round(ifr_score_b, 2), "peso": "20%"},
-                "perf_diferencia": {"a": round(perf_score_a, 2), "b": round(perf_score_b, 2), "peso": "20%"},
-                "fortaleza_rivales": {"a": round(opp_score_a, 2), "b": round(opp_score_b, 2), "peso": "10%"},
-                "localia_contexto": {"a": round(ctx_score_a, 2), "b": round(ctx_score_b, 2), "peso": "15%"},
-                "historial_directo": {"a": round(h2h_score_a, 2), "b": round(h2h_score_b, 2), "peso": "5%"},
-                "calidad_plantel": {"a": round(squad_score_a, 2), "b": round(squad_score_b, 2), "peso": "5%"}
+                "elo_rating": {"a": round(elo_score_a, 2), "b": round(elo_score_b, 2), "peso": "24%"},
+                "forma_reciente": {"a": round(ifr_score_a, 2), "b": round(ifr_score_b, 2), "peso": "13%"},
+                "perf_diferencia": {"a": round(perf_score_a, 2), "b": round(perf_score_b, 2), "peso": "13%"},
+                "fortaleza_rivales": {"a": round(opp_score_a, 2), "b": round(opp_score_b, 2), "peso": "20%"},
+                "localia_contexto": {"a": round(ctx_score_a, 2), "b": round(ctx_score_b, 2), "peso": "3%"},
+                "historial_directo": {"a": round(h2h_score_a, 2), "b": round(h2h_score_b, 2), "peso": "17%"},
+                "calidad_plantel": {"a": round(squad_score_a, 2), "b": round(squad_score_b, 2), "peso": "10%"}
             }
         }
 
@@ -663,37 +663,36 @@ class Predictor:
 
     # ─── Stage 8: Estimacion de Goles Esperados (Lambda) ────────────────────
     def _stage_8(self, team_a, team_b, stages):
-        mmp = stages["stage_7"]
-        iff_a = mmp["iff_a"]
-        iff_b = mmp["iff_b"]
-        total_iff = iff_a + iff_b
-        attack_a = (iff_a / total_iff) * 2 if total_iff > 0 else 1
-        attack_b = (iff_b / total_iff) * 2 if total_iff > 0 else 1
-        defense_a = 2 - attack_a
-        defense_b = 2 - attack_b
+        perf_a = stages["stage_5"]["team_a"]
+        perf_b = stages["stage_5"]["team_b"]
+        attack_a = max(perf_a["perf"] / self.global_avg_goals, 0.3)
+        attack_b = max(perf_b["perf"] / self.global_avg_goals, 0.3)
+        defense_a = max(perf_a["perf_against"] / self.global_avg_goals, 0.3)
+        defense_b = max(perf_b["perf_against"] / self.global_avg_goals, 0.3)
         ctx = stages["stage_6"]
         ctx_factor_a = 1.0 + ctx["ajuste_total_a"]
         ctx_factor_b = 1.0 + ctx["ajuste_total_b"]
 
-        lam_a = self.global_avg_goals * max(attack_a, 0.3) * max(defense_b, 0.3) * max(ctx_factor_a, 0.3)
-        lam_b = self.global_avg_goals * max(attack_b, 0.3) * max(defense_a, 0.3) * max(ctx_factor_b, 0.3)
+        lam_a = self.global_avg_goals * attack_a * defense_b * ctx_factor_a
+        lam_b = self.global_avg_goals * attack_b * defense_a * ctx_factor_b
 
         return {
             "lambda_a": round(lam_a, 4),
             "lambda_b": round(lam_b, 4),
-            "ataque_a": round(attack_a, 4),
-            "defensa_b": round(defense_b, 4),
-            "ataque_b": round(attack_b, 4),
-            "defensa_a": round(defense_a, 4),
+            "perf_ataque_a": round(attack_a, 4),
+            "perf_defensa_b": round(defense_b, 4),
+            "perf_ataque_b": round(attack_b, 4),
+            "perf_defensa_a": round(defense_a, 4),
             "factor_contexto_a": round(ctx_factor_a, 4),
             "factor_contexto_b": round(ctx_factor_b, 4),
             "goles_promedio_global": round(self.global_avg_goals, 4),
-            "formula": "λ = G_avg × Ataque × Defensa_rival × Contexto",
+            "formula": "λ = G_avg × (perf / G_avg) × (perf_against_rival / G_avg) × Contexto",
             "detalle_calculo": {
                 "global_avg": self.global_avg_goals,
-                "iff_a": iff_a, "iff_b": iff_b,
-                "ataque_formula": "IFF_team / (IFF_a + IFF_b) × 2",
-                "defensa_formula": "2 - Ataque",
+                "perf_a": perf_a["perf"], "perf_against_a": perf_a["perf_against"],
+                "perf_b": perf_b["perf"], "perf_against_b": perf_b["perf_against"],
+                "ataque_formula": "perf_team / G_avg (independiente)",
+                "defensa_formula": "perf_against_team / G_avg (independiente)",
                 "contexto_formula": "1 + ajuste_total"
             }
         }

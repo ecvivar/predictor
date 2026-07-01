@@ -1,5 +1,7 @@
 import hashlib
 import math
+import json
+import os
 import numpy as np
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -10,7 +12,8 @@ from .utils import (
     poisson_distribution, dixon_coles_adjustment, monte_carlo_simulation,
     expected_goals_from_matrix, elo_expected, tournament_k_factor,
     btts_probability, over_probability, under_probability,
-    clean_sheet_probability, implied_odds
+    clean_sheet_probability, implied_odds, build_calibration_curve,
+    apply_calibration
 )
 
 class Predictor:
@@ -21,6 +24,23 @@ class Predictor:
         self.global_avg_goals = 1.35
         self._compute_global_stats()
         self._compute_recent_elo_trends()
+        total = len(self.matches)
+        draws = sum(1 for m in self.matches if m["home_score"] == m["away_score"])
+        self.base_draw_rate = draws / total if total > 0 else 0.25
+        self.calibration_curves = None
+        self.ece = None
+        cal_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "calibration_data.json")
+        if os.path.exists(cal_path):
+            try:
+                with open(cal_path) as f:
+                    cal_data = json.load(f)
+                self.calibration_curves = {k: v for k, v in cal_data.items()
+                                           if k in ("win", "draw", "loss")}
+                self.ece = cal_data.get("ece_avg", None)
+            except Exception:
+                self.calibration_curves = None
+                self.ece = None
 
     def _compute_global_stats(self):
         total = len(self.matches)
@@ -207,7 +227,13 @@ class Predictor:
         elo_a = self.elo_ratings.get(team_a, 1500)
         elo_b = self.elo_ratings.get(team_b, 1500)
         t_a, t_b = translate_team(team_a), translate_team(team_b)
-        prob_a = elo_expected(elo_a, elo_b)
+        prob_a_raw = elo_expected(elo_a, elo_b)
+        elo_diff = abs(elo_a - elo_b)
+        draw_prob = self.base_draw_rate * math.exp(-elo_diff / 300)
+        total_p = prob_a_raw + (1 - prob_a_raw) + draw_prob
+        prob_a = prob_a_raw / total_p
+        prob_d = draw_prob / total_p
+        prob_b = (1 - prob_a_raw) / total_p
         trend_a = self.elo_recent_trend.get(team_a, 0)
         trend_b = self.elo_recent_trend.get(team_b, 0)
 
@@ -245,10 +271,12 @@ class Predictor:
             "elo_diff": round(elo_a - elo_b, 1),
             "probabilidad_teorica_elo": {
                 "team_a": round(prob_a * 100, 2),
-                "team_b": round((1 - prob_a) * 100, 2)
+                "draw": round(prob_d * 100, 2),
+                "team_b": round(prob_b * 100, 2)
             },
             "interpretacion": f"Elo diferencial de {abs(round(elo_a - elo_b, 1))} puntos. "
-                             f"El modelo asigna {round(prob_a * 100, 1)}% de probabilidad teorica a {t_a}.",
+                             f"El modelo asigna {round(prob_a * 100, 1)}%/{round(prob_d * 100, 1)}%/{round(prob_b * 100, 1)}% "
+                             f"(V/E/D) a {t_a}.",
             "metodologia": "Elo dinamico ponderado por importancia del torneo: Mundial K=60, "
                           "Eliminatorias K=54, Copas Continentales K=48, Nations League K=42, "
                           "Amistosos K=21. Multiplicador por diferencia de goles aplicado.",
@@ -702,12 +730,12 @@ class Predictor:
         lam = stages["stage_8"]
         lam_a = lam["lambda_a"]
         lam_b = lam["lambda_b"]
-        dist_a = poisson_distribution(lam_a, 6)
-        dist_b = poisson_distribution(lam_b, 6)
+        dist_a = poisson_distribution(lam_a, 8)
+        dist_b = poisson_distribution(lam_b, 8)
         matrix = []
-        for i in range(6):
+        for i in range(8):
             row = []
-            for j in range(6):
+            for j in range(8):
                 row.append(round(dist_a[i] * dist_b[j], 6))
             matrix.append(row)
         return {
@@ -715,8 +743,8 @@ class Predictor:
             "distribucion_a": [round(p, 4) for p in dist_a],
             "distribucion_b": [round(p, 4) for p in dist_b],
             "matrix_probabilidades": matrix,
-            "labels": [str(i) for i in range(5)] + ["5+"],
-            "metodologia": "Distribucion Poisson: P(X=k) = (e^-λ × λ^k) / k!"
+            "labels": [str(i) for i in range(7)] + ["7+"],
+            "metodologia": "Distribucion Poisson: P(X=k) = (e^-λ × λ^k) / k! (renormalizada a 8 terminos)"
         }
 
     # ─── Stage 10: Ajuste Dixon-Coles ───────────────────────────────────────
@@ -725,11 +753,11 @@ class Predictor:
         lam_a = lam["lambda_a"]
         lam_b = lam["lambda_b"]
         poisson_matrix = stages["stage_9"]["matrix_probabilidades"]
-        dc_matrix = dixon_coles_adjustment(lam_a, lam_b, rho=-0.06, max_goals=6)
+        dc_matrix = dixon_coles_adjustment(lam_a, lam_b, rho=-0.06, max_goals=8)
         diff_matrix = []
-        for i in range(6):
+        for i in range(8):
             row = []
-            for j in range(6):
+            for j in range(8):
                 row.append(round(dc_matrix[i][j] - poisson_matrix[i][j], 6))
             diff_matrix.append(row)
         return {
@@ -753,18 +781,29 @@ class Predictor:
         dc = stages["stage_10"]["after"]
         t_a, t_b = translate_team(team_a), translate_team(team_b)
         results = monte_carlo_simulation(dc, iterations=100000)
-        exp_a, exp_b = expected_goals_from_matrix(dc, 6)
+        probs = results["probabilities"]
+        # Apply calibration if available
+        if self.calibration_curves:
+            probs["win_a"] = apply_calibration(probs["win_a"], self.calibration_curves["win"])
+            probs["draw"]  = apply_calibration(probs["draw"],  self.calibration_curves["draw"])
+            probs["win_b"] = apply_calibration(probs["win_b"], self.calibration_curves["loss"])
+            total_c = probs["win_a"] + probs["draw"] + probs["win_b"]
+            if total_c > 0:
+                probs["win_a"] /= total_c
+                probs["draw"]  /= total_c
+                probs["win_b"] /= total_c
+        exp_a, exp_b = expected_goals_from_matrix(dc, 8)
         results["expected_goals_matrix_a"] = round(exp_a, 4)
         results["expected_goals_matrix_b"] = round(exp_b, 4)
         results["probabilidades_formateadas"] = {
-            "team_a": f"{results['probabilities']['win_a']*100:.2f}%",
-            "draw": f"{results['probabilities']['draw']*100:.2f}%",
-            "team_b": f"{results['probabilities']['win_b']*100:.2f}%"
+            "team_a": f"{probs['win_a']*100:.2f}%",
+            "draw": f"{probs['draw']*100:.2f}%",
+            "team_b": f"{probs['win_b']*100:.2f}%"
         }
         results["interpretacion"] = (f"100,000 simulaciones ejecutadas. "
-            f"{t_a} gana {results['probabilities']['win_a']*100:.1f}%, "
-            f"Empate {results['probabilities']['draw']*100:.1f}%, "
-            f"{t_b} gana {results['probabilities']['win_b']*100:.1f}%")
+            f"{t_a} gana {probs['win_a']*100:.1f}%, "
+            f"Empate {probs['draw']*100:.1f}%, "
+            f"{t_b} gana {probs['win_b']*100:.1f}%")
         return results
 
     # ─── Stage 12: Analisis de Sensibilidad ─────────────────────────────────
@@ -935,19 +974,18 @@ class Predictor:
         likely_winner = t_a if probs["win_a"] == win_p else (
             t_b if probs["win_b"] == win_p else "Empate")
         most_likely = top_scores[0] if top_scores else {"score": "0-0", "probability": 0}
-        # Confidence = how much the leading outcome exceeds a random baseline (33%)
-        # Scale: 33% lead → high confidence, near-equal → lower confidence
-        max_prob = max(probs["win_a"], probs["win_b"], probs["draw"])
-        edge_over_random = max_prob - (1/3)  # how far above random 33%
-        data_richness = 0.75  # premium from large historical dataset
-        normalized_var = (mc["variance_a"] + mc["variance_b"]) / 2
-        variance_penalty = min(0.15, normalized_var / 20)
-        model_confidence = max(0, min(95, (
-            50 +                          # base confidence from methodology
-            edge_over_random * 120 +      # edge above random (0-40%)
-            data_richness * 20 -          # bonus from data richness
-            variance_penalty * 100        # penalty from high variance
-        )))
+        if self.ece is not None:
+            model_confidence = max(0, min(100, round((1 - self.ece) * 100, 2)))
+        else:
+            max_prob = max(probs["win_a"], probs["win_b"], probs["draw"])
+            edge_over_random = max_prob - (1/3)
+            data_richness = 0.75
+            normalized_var = (mc["variance_a"] + mc["variance_b"]) / 2
+            variance_penalty = min(0.15, normalized_var / 20)
+            model_confidence = max(0, min(95, (
+                50 + edge_over_random * 120 +
+                data_richness * 20 - variance_penalty * 100
+            )))
         summary = (
             f"INFORME PREDICTIVO COMPLETO - 16 ETAPAS\n"
             f"{t_a}: {probs['win_a']*100:.1f}% / Empate: {probs['draw']*100:.1f}% / {t_b}: {probs['win_b']*100:.1f}%\n"

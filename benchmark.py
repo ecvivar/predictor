@@ -99,9 +99,9 @@ def run():
                 arrow = "+" if delta > 0 else ""
                 label = ""
                 if lower_better:
-                    label = " ▼" if delta < 0 else (" ▲" if delta > 0 else "  ")
+                    label = " v" if delta < 0 else (" ^" if delta > 0 else "  ")
                 else:
-                    label = " ▲" if delta > 0 else (" ▼" if delta < 0 else "  ")
+                    label = " ^" if delta > 0 else (" v" if delta < 0 else "  ")
                 pct = (delta / prev_v) * 100 if prev_v != 0 else 0
                 print(f"  {name:<20s} {prev_v:<12.4f} {curr_v:<12.4f} {arrow}{delta:<+9.4f} ({pct:+.1f}%){label}")
     else:

@@ -2,7 +2,7 @@ Estamos trabajando siguiendo el documento AGENT.md.
 
 La auditoría ya fue realizada.
 
-Vamos a ejecutar únicamente la Iteración 7 - Mejorar Poisson.
+Vamos a ejecutar únicamente la Iteración 10 - Benchmark contra Elo.
 
 No avances sobre ninguna otra iteración.
 

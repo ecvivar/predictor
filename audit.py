@@ -17,6 +17,7 @@ from backend.predictor import Predictor
 from backend.data_loader import load_matches, compute_elo_history, get_team_matches, get_elo_at_date
 from backend.utils import elo_expected, elo_update, tournament_k_factor, poisson_distribution
 from backend.utils import monte_carlo_simulation, dixon_coles_adjustment, expected_goals_from_matrix
+from backend.utils import build_calibration_curve, apply_calibration
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 TEST_MATCHES = 500
@@ -282,6 +283,17 @@ def run_backtest():
     t_stat = np.mean(diff) / (np.std(diff, ddof=1) / np.sqrt(len(diff)))
     from scipy.stats import norm
     metrics["p_value"] = float(2 * (1 - norm.cdf(abs(t_stat))))
+
+    # ─── CALIBRATION CURVE ────────────────────────────────────────────────
+    cal_data = {}
+    for i, outcome in enumerate(["win", "draw", "loss"]):
+        curve = build_calibration_curve(fp[:, i], (fo == i).astype(int))
+        cal_data[outcome] = curve
+    cal_data["ece_avg"] = metrics["ece_avg"]
+    cal_data["n_samples"] = len(fo)
+    cal_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibration_data.json")
+    with open(cal_path, "w") as f:
+        json.dump(cal_data, f, indent=2)
 
     # ─── ROBUSTEZ ──────────────────────────────────────────────────────────
     print("[5/5] Pruebas de robustez...")

@@ -6,10 +6,12 @@ def poisson_prob(k, lam):
         return 1.0 if k == 0 else 0.0
     return (math.exp(-lam) * (lam ** k)) / math.factorial(k)
 
-def poisson_distribution(lam, max_goals=6):
-    return [poisson_prob(i, lam) for i in range(max_goals)]
+def poisson_distribution(lam, max_goals=8):
+    probs = [poisson_prob(i, lam) for i in range(max_goals)]
+    s = sum(probs)
+    return [p / s for p in probs]
 
-def dixon_coles_adjustment(lam_a, lam_b, rho=-0.06, max_goals=6):
+def dixon_coles_adjustment(lam_a, lam_b, rho=-0.06, max_goals=8):
     base = np.zeros((max_goals, max_goals))
     for i in range(max_goals):
         for j in range(max_goals):
@@ -63,7 +65,7 @@ def monte_carlo_simulation(matrix, iterations=100000):
         'total_simulations': iterations
     }
 
-def expected_goals_from_matrix(matrix, max_goals=6):
+def expected_goals_from_matrix(matrix, max_goals=8):
     exp_a = 0.0
     exp_b = 0.0
     for i in range(max_goals):
@@ -107,14 +109,14 @@ def tournament_k_factor(tournament):
         return 21
     return 30
 
-def btts_probability(matrix, max_goals=6):
+def btts_probability(matrix, max_goals=8):
     prob = 0.0
     for i in range(1, max_goals):
         for j in range(1, max_goals):
             prob += matrix[i][j]
     return prob
 
-def over_probability(matrix, threshold, max_goals=6):
+def over_probability(matrix, threshold, max_goals=8):
     prob = 0.0
     for i in range(max_goals):
         for j in range(max_goals):
@@ -122,7 +124,7 @@ def over_probability(matrix, threshold, max_goals=6):
                 prob += matrix[i][j]
     return prob
 
-def under_probability(matrix, threshold, max_goals=6):
+def under_probability(matrix, threshold, max_goals=8):
     prob = 0.0
     for i in range(max_goals):
         for j in range(max_goals):
@@ -130,7 +132,7 @@ def under_probability(matrix, threshold, max_goals=6):
                 prob += matrix[i][j]
     return prob
 
-def clean_sheet_probability(matrix, team='a', max_goals=6):
+def clean_sheet_probability(matrix, team='a', max_goals=8):
     prob = 0.0
     if team.lower() == 'a':
         for j in range(max_goals):
@@ -144,3 +146,31 @@ def implied_odds(prob):
     if prob <= 0:
         return 999.0
     return 1.0 / prob
+
+def build_calibration_curve(predicted_probs, actual_outcomes, n_bins=10):
+    probs = np.array(predicted_probs)
+    actuals = np.array(actual_outcomes)
+    bins = np.linspace(0, 1, n_bins + 1)
+    curve = []
+    for i in range(n_bins):
+        lo, hi = bins[i], bins[i + 1]
+        if i == n_bins - 1:
+            mask = (probs >= lo) & (probs <= hi)
+        else:
+            mask = (probs >= lo) & (probs < hi)
+        count = int(np.sum(mask))
+        if count >= 5:
+            calibrated = float(np.mean(actuals[mask]))
+        else:
+            calibrated = (lo + hi) / 2
+        curve.append({"bin_lo": round(lo, 3), "bin_hi": round(hi, 3),
+                       "raw_prob": round((lo + hi) / 2, 3),
+                       "calibrated_prob": round(calibrated, 4),
+                       "count": count})
+    return curve
+
+def apply_calibration(raw_prob, curve):
+    for entry in curve:
+        if entry["bin_lo"] <= raw_prob <= entry["bin_hi"]:
+            return entry["calibrated_prob"]
+    return raw_prob

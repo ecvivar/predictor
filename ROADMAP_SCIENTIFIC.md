@@ -13,8 +13,8 @@ FASE 2
 
 FASE 3
 
-⬜ Iteración 7 - Mejorar Poisson.
-⬜ Iteración 8 - Modelo de empate.
-⬜ Iteración 9 - Calibración automática.
+✅ Iteración 7 - Mejorar Poisson.
+✅ Iteración 8 - Modelo de empate.
+✅ Iteración 9 - Calibración automática.
 ⬜ Iteración 10 - Benchmark contra Elo.
 

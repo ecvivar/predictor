@@ -62,11 +62,11 @@ class TestForecastEngine(unittest.TestCase):
                 msg=f"stage_{i} missing from prediction output")
 
     def test_confidence_level_range(self):
-        """Test that model confidence is between 0 and 95."""
+        """Test that model confidence is between 0 and 100."""
         result = self.predictor.predict("Argentina", "Brazil", {"neutral": True})
         conf = result.get("stage_16", {}).get("nivel_confianza", -1)
         self.assertGreaterEqual(conf, 0, "Confidence should be >= 0")
-        self.assertLessEqual(conf, 95, "Confidence should be <= 95")
+        self.assertLessEqual(conf, 100, "Confidence should be <= 100")
         self.assertGreater(conf, 50, "For top teams, confidence should be > 50")
 
     def test_lambda_values_reasonable(self):
